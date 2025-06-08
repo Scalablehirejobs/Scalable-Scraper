@@ -220,7 +220,7 @@ def main():
             return
 
         min_salary = st.number_input("Minimum Salary (£)", min_value=0, value=24000)
-        num_pages = st.number_input("Pages to Scrape", min_value=1, max_value=50, value=1)
+        num_pages = st.number_input("Pages to Scrape", min_value=1, max_value=500, value=1)
         license_filter = st.checkbox("Must Not Require Driver's License")
 
         location_filter = st.text_input("Location (optional)", "")
