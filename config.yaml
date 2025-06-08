@@ -1,0 +1,13 @@
+credentials:
+  usernames:
+    scalablehire:
+      email: scalablehirejobs@gmail.com
+      name: Scalable Hire
+      password: "$2b$12$hQaCG1dEL/8cj3nKNSPgUO86yrQ2DnBqLs5o1OiWqp6DIhGfWL7jW"
+cookie:
+  expiry_days: 30
+  key: scalable_hire_secret_key_2025
+  name: scalable_hire_cookie
+preauthorized:
+  emails:
+    - scalablehirejobs@gmail.com
