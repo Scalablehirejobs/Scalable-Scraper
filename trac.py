@@ -183,8 +183,8 @@ def job_filter_sidebar():
         max_band = st.number_input("Max Band", min_value=1, max_value=9, value=4, key="max_band")
 
     st.sidebar.markdown("#### Other Requirements")
-    requires_license = st.sidebar.checkbox("Does Not Require Driver's License", value=True)
-    sponsorship_required = st.sidebar.checkbox("Must Offer Sponsorship", value=True)
+    requires_license = st.sidebar.checkbox("Requires Driver's License", value=True)
+    sponsorship_required = st.sidebar.checkbox("Offer Sponsorships", value=True)
 
     pages_to_scrape = st.sidebar.slider("Pages to Scrape", 1, 10, 3)
     search = st.sidebar.button("Search Jobs 🔎")
