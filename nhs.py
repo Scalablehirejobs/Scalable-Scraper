@@ -261,8 +261,23 @@ def main():
     st.subheader(f"Results ({len(df_sorted)} jobs found)")
     st.dataframe(df_sorted.head(10))
 
+    # Save to disk (optional)
     df_sorted.to_csv("nhs_jobs_filtered.csv", index=False)
-    # st.download_button("📥 Download Results as CSV", df_sorted, "nhs_jobs.csv", "text/csv")
+    
+    # ✅ Convert to CSV in memory
+    csv_buffer = io.StringIO()
+    df_sorted.to_csv(csv_buffer, index=False)
+    csv_data = csv_buffer.getvalue()
+    
+    # ✅ Show download button
+    st.download_button(
+        label="📥 Download Results as CSV",
+        data=csv_data,
+        file_name="nhs_jobs_filtered.csv",
+        mime="text/csv"
+    )
+    
+    # Confirmation message
     st.success("Saved to nhs_jobs_filtered.csv")
 
 if __name__ == "__main__":
