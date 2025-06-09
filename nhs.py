@@ -7,6 +7,7 @@ from datetime import datetime
 from fuzzywuzzy import fuzz
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
+import io
 
 # --------- Utility Functions ---------
 def get_search_results_page(search_url, session):
