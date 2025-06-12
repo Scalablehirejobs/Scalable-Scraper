@@ -1,14 +1,10 @@
-# gdrive_uploader.py
-
-import toml
 import pandas as pd
-import datetime
 from io import BytesIO
+import streamlit as st
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
-from googleapiclient.discovery import build
-import streamlit as st
+
 
 def get_drive_service():
     secrets = st.secrets["google"]
@@ -21,8 +17,11 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=creds)
 
+
 def get_today_filename():
-    return "nhs_" + datetime.date.today().isoformat() + ".xlsx"
+    import datetime
+    return datetime.date.today().isoformat() + ".xlsx"
+
 
 def find_file(service, filename):
     query = f"name = '{filename}' and mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'"
@@ -30,15 +29,22 @@ def find_file(service, filename):
     files = results.get("files", [])
     return files[0] if files else None
 
+
 def upload_new_file(service, df, filename):
-    df = df.sort_values(by="Date Posted", ascending=False)
+    # Normalize date format before sorting
+    if "Date Posted" in df.columns:
+        df["Date Posted"] = pd.to_datetime(df["Date Posted"], errors="coerce")
+        df = df.sort_values(by="Date Posted", ascending=False)
+
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
         df.to_excel(writer, index=False)
     buffer.seek(0)
+
     media = MediaIoBaseUpload(buffer, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     file_metadata = {'name': filename, 'mimeType': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}
     service.files().create(body=file_metadata, media_body=media, fields='id').execute()
+
 
 def update_existing_file(service, file_id, local_df):
     request = service.files().get_media(fileId=file_id)
@@ -49,10 +55,14 @@ def update_existing_file(service, file_id, local_df):
         status, done = downloader.next_chunk()
     fh.seek(0)
 
-    # Read Excel
     existing_df = pd.read_excel(fh)
+
+    # Merge, deduplicate, and normalize date
     merged_df = pd.concat([existing_df, local_df]).drop_duplicates()
-    merged_df = merged_df.sort_values(by="Date Posted", ascending=False)
+
+    if "Date Posted" in merged_df.columns:
+        merged_df["Date Posted"] = pd.to_datetime(merged_df["Date Posted"], errors="coerce")
+        merged_df = merged_df.sort_values(by="Date Posted", ascending=False)
 
     buffer = BytesIO()
     with pd.ExcelWriter(buffer, engine="xlsxwriter") as writer:
@@ -62,10 +72,12 @@ def update_existing_file(service, file_id, local_df):
     media = MediaIoBaseUpload(buffer, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     service.files().update(fileId=file_id, media_body=media).execute()
 
+
 def upload_to_drive(df):
     filename = get_today_filename()
     service = get_drive_service()
     file_info = find_file(service, filename)
+
     if file_info:
         update_existing_file(service, file_info['id'], df)
         return "File updated successfully!"
