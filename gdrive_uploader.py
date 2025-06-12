@@ -30,10 +30,15 @@ def find_file(service, filename):
     return files[0] if files else None
 
 
+def normalize_date_column(df, column_name):
+    if column_name in df.columns:
+        df[column_name] = pd.to_datetime(df[column_name], errors="coerce")
+    return df
+
+
 def upload_new_file(service, df, filename):
-    # Normalize date format before sorting
+    df = normalize_date_column(df, "Date Posted")
     if "Date Posted" in df.columns:
-        df["Date Posted"] = pd.to_datetime(df["Date Posted"], errors="coerce")
         df = df.sort_values(by="Date Posted", ascending=False)
 
     buffer = BytesIO()
@@ -57,11 +62,13 @@ def update_existing_file(service, file_id, local_df):
 
     existing_df = pd.read_excel(fh)
 
-    # Merge, deduplicate, and normalize date
+    local_df = normalize_date_column(local_df, "Date Posted")
+    existing_df = normalize_date_column(existing_df, "Date Posted")
+
+    # Merge and deduplicate
     merged_df = pd.concat([existing_df, local_df]).drop_duplicates()
 
     if "Date Posted" in merged_df.columns:
-        merged_df["Date Posted"] = pd.to_datetime(merged_df["Date Posted"], errors="coerce")
         merged_df = merged_df.sort_values(by="Date Posted", ascending=False)
 
     buffer = BytesIO()
