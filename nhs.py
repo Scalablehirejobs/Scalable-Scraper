@@ -312,15 +312,28 @@ def main():
 
         st.success("Saved to nhs_jobs_filtered.csv")
 
-    # Upload section – outside the scraping logic, always available if session data exists
-    st.markdown("---")
-    st.subheader("📤 Upload to Google Drive")
+   
+
 
     if "df_sorted" in st.session_state:
+         # Upload section – outside the scraping logic, always available if session data exists
+        st.markdown("---")
+        st.subheader("📤 Upload to Google Drive")
+        # Category selection (before upload)
+        category = st.selectbox("Select Job Category", [
+            "Admin",
+            "Healthcare",
+            "Business (Program Management, Business Analyst)",
+            "Finance",
+            "Tech (Software, Engineering, etc)"
+        ], index=None, placeholder="Choose a category")
+
+        if not category:
+            st.error("Please select a category before upload")
         if st.button("📤 Upload"):
             try:
                 import gdrive_uploader
-                message = gdrive_uploader.upload_to_drive(st.session_state["df_sorted"])
+                message = gdrive_uploader.upload_to_drive(st.session_state["df_sorted"], category)
                 st.success("✅ Upload completed successfully!")
                 st.caption(message)
             except Exception as e:
