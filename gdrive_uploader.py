@@ -24,7 +24,8 @@ def get_drive_service():
 
 def get_today_filename(prefix=None):
     import datetime
-    return datetime.date.today().isoformat() + ".xlsx"
+    date_str = datetime.date.today().isoformat()
+    return f"{prefix}_{date_str}.xlsx" if prefix else f"{date_str}.xlsx"
 
 
 def find_file(service, filename):
