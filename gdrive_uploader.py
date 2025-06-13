@@ -22,7 +22,7 @@ def get_drive_service():
 
 # -------------------- FILE & SHEET HELPERS --------------------
 
-def get_today_filename():
+def get_today_filename(prefix=None):
     import datetime
     return datetime.date.today().isoformat() + ".xlsx"
 
