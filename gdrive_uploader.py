@@ -185,26 +185,12 @@ def update_existing_file_by_sheet(service, file_id, new_df, sheet_name):
 
 # -------------------- MAIN UPLOAD FUNCTION --------------------
 
-def upload_to_drive(df):
-    st.subheader("Upload Job Data")
-
-    category = st.selectbox("Select Job Category", [
-        "Admin",
-        "Healthcare",
-        "Business (Program Management, Business Analyst)",
-        "Finance",
-        "Tech (Software, Engineering, etc)"
-    ])
-
-    if not category:
-        st.warning("Please select a category.")
-        return
-
+def upload_to_drive(df, category):
     filename = get_today_filename()
     service = get_drive_service()
     file_info = find_file(service, filename)
 
-    # Normalize date before saving
+    # Normalize and clean up date
     df = normalize_date_column(df, "Date Posted")
 
     if file_info:
