@@ -323,9 +323,9 @@ def main():
         category = st.selectbox("Select Job Category", [
             "Admin",
             "Healthcare",
-            "Business (Program Management, Business Analyst)",
+            "Business (PM, BA)",
             "Finance",
-            "Tech (Software, Engineering, etc)"
+            "Tech"
         ], index=None, placeholder="Choose a category")
 
         if not category:
