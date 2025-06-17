@@ -63,37 +63,46 @@ def filter_by_salary(salary_str, min_salary):
         return False
 
 
-def job_detail_passes_filters(job_url, contract_type, working_pattern, requires_license, sponsorship_required):
+def job_detail_passes_filters(job_url, contract_type, working_pattern, filter_sponsorship, sponsorship_preference,
+                               filter_license, license_preference):
     try:
         detail_response = requests.get(job_url, timeout=10)
         detail_soup = BeautifulSoup(detail_response.text, "html.parser")
 
         contract = extract_text(detail_soup, "#hj-job-summary > div > div > div > dl:nth-child(1) > dd:nth-child(6)")
         pattern = extract_text(detail_soup, "#hj-job-summary > div > div > div > dl:nth-child(1) > dd:nth-child(8)")
-        description_block = detail_soup.get_text(separator=" ", strip=True).lower()
+        description_block = detail_soup.get_text(separator=" ", strip=True)
+        requirements = analyze_job_requirements(description_block)
+        sponsorship_status = requirements["sponsorship"]
+        license_status = requirements["license"]
 
-        sponsorship_status = detect_sponsorship(detail_soup)
-        requires_sponsorship = (sponsorship_status != "Not Offered")
-
-        requires_license = any(
-            re.search(rf"\b{word}\b", description_block)
-            for word in ["driver", "licence", "license"]
-        )
+        
 
         info = {
-            "Requires Sponsorship": requires_sponsorship,
-            "Requires Driver's License": requires_license
+            "sponsorship": sponsorship_status,
+            "license": license_status
         }
-        
+
+
         # Filter logic
         if contract_type and contract_type.lower() not in contract.lower():
             return False, info
         if working_pattern and working_pattern.lower() not in pattern.lower():
             return False, info
-        if requires_license and not info["Requires Driver's License"]:
-            return False, info
-        if not sponsorship_required and info["Requires Sponsorship"]:
-            return False, info
+        if filter_sponsorship:
+            if sponsorship_preference == "Offered" and sponsorship_status == "Not Offered":
+                return False, info
+            if sponsorship_preference == "Not Offered" and sponsorship_status == "Offered":
+                return False, info
+        if filter_license:
+            if license_preference == "Requires License" and license_status == "Does Not Require License":
+                return False, info
+            if license_preference == "Does Not Require License" and license_status == "Requires License":
+                return False, info
+
+
+        
+
 
         return True, info
     except requests.RequestException:
@@ -102,7 +111,8 @@ def job_detail_passes_filters(job_url, contract_type, working_pattern, requires_
 
 
 def process_single_job(job, keywords, min_salary, contract_type, working_pattern, min_band, max_band,
-                       requires_license, sponsorship_required):
+                       filter_sponsorship, sponsorship_preference,
+                       filter_license, license_preference):
     link_tag = job.select_one("a")
     if not link_tag:
         return None
@@ -124,7 +134,8 @@ def process_single_job(job, keywords, min_salary, contract_type, working_pattern
         return None
 
     passed, info = job_detail_passes_filters(
-        job_url, contract_type, working_pattern, requires_license, sponsorship_required
+        job_url, contract_type, working_pattern, filter_sponsorship, sponsorship_preference,
+    filter_license, license_preference
     )
     if not passed:
         return None
@@ -136,15 +147,15 @@ def process_single_job(job, keywords, min_salary, contract_type, working_pattern
         "Min Salary": min_sal,
         "Max Salary": max_sal,
         "URL": job_url,
-        "Does Not Offer Sponsorship": info.get("Requires Sponsorship"),
-        "Requires Driver's License": info.get("Requires Driver's License")
+        "Sponsorship Status": info.get("sponsorship", "Likely Offered"),
+        "License Requirement": info.get("license", "Possibly Not Required")
     }
 
 
 
 
 def scrape_trac_jobs(keywords, min_salary, contract_type, working_pattern, min_band, max_band,
-                     requires_license=False, sponsorship_required=True, pages_to_scrape=3):
+                pages_to_scrape=3):
     all_results = []
 
     keyword_placeholders = {kw: st.empty() for kw in keywords}
@@ -170,7 +181,8 @@ def scrape_trac_jobs(keywords, min_salary, contract_type, working_pattern, min_b
                 futures = [
                     executor.submit(
                         process_single_job, job, keywords, min_salary, contract_type,
-                        working_pattern, min_band, max_band, requires_license, sponsorship_required
+                        working_pattern, min_band, max_band, filter_sponsorship, sponsorship_preference,
+                        filter_license, license_preference
                     ) for job in job_listings
                 ]
 
@@ -189,6 +201,42 @@ def scrape_trac_jobs(keywords, min_salary, contract_type, working_pattern, min_b
     return pd.DataFrame(all_results)
 
 
+def analyze_job_requirements(description: str) -> dict:
+    """
+    Analyze a job description and return:
+        - 'sponsorship': "Offered" | "Not Offered" | "Unknown"
+        - 'license': "Requires License" | "Does Not Require License" | "Unknown"
+    """
+    description = description.lower()
+    result = {
+        "sponsorship": "Unknown",
+        "license": "Possibly Not Required"
+    }
+
+    # Sponsorship logic
+    
+    if any(phrase in description for phrase in [
+    "not offer sponsorship", "no sponsorship", "unable to sponsor",
+    "not able to sponsor", "sponsorship is not available",
+    "cannot provide visa", "cannot sponsor", "unable to provide sponsorship"
+    ]):
+        result["sponsorship"] = "Not Offered"
+    else:
+        result["sponsorship"] = "Offered"
+
+    # print(f"This is where we are, {result['sponsorship']}")
+
+
+    # License logic
+    if "no driving license required" in description:
+        result["license"] = "Does Not Require License"
+    elif any(phrase in description for phrase in [
+        "valid driver", "full driving licence", "uk driving license",
+        "requires own transport"
+    ]):
+        result["license"] = "Requires License"
+
+    return result
 
 
 # Streamlit UI
@@ -211,27 +259,31 @@ def job_filter_sidebar():
         max_band = st.number_input("Max Band", min_value=1, max_value=9, value=5, key="max_band")
 
     st.sidebar.markdown("#### Other Requirements")
-    requires_license = st.sidebar.checkbox("Requires Driver's License", value=False)
-    sponsorship_required = st.sidebar.checkbox("Offer Sponsorships", value=True)
+
+    filter_sponsorship = st.sidebar.checkbox("Filter by Sponsorship", value=False)
+    sponsorship_preference = st.sidebar.radio(
+        "Sponsorship Requirement",
+        ["Offered", "Not Offered"],
+        index=0,
+        disabled=not filter_sponsorship
+    )
+
+    filter_license = st.sidebar.checkbox("Filter by Driver's License", value=False)
+    license_preference = st.sidebar.radio(
+        "License Requirement",
+        ["Requires License", "Does Not Require License"],
+        index=0,
+        disabled=not filter_license
+    )
+
 
     pages_to_scrape = st.sidebar.number_input(
     "Pages to Scrape", min_value=1, max_value=50, value=3, step=1
 )
     search = st.sidebar.button("Search Jobs 🔎")
 
-    return keywords, min_salary, contract_type, working_pattern, min_band, max_band, requires_license, sponsorship_required, pages_to_scrape, search
+    return keywords, min_salary, contract_type, working_pattern, min_band, max_band, pages_to_scrape, search, filter_sponsorship, sponsorship_preference, filter_license, license_preference
 
-
-def detect_sponsorship(soup):
-    denial_phrases = [
-        "not offer sponsorship", "no sponsorship", "unable to sponsor",
-        "not able to sponsor", "must have right to work",
-        "cannot provide visa", "cannot sponsor", "uk residency required"
-    ]
-    description_block = soup.get_text(separator=" ", strip=True).lower()
-    if any(phrase in description_block for phrase in denial_phrases):
-        return "Not Offered"
-    return "Likely Offered"
 
 
 # 🎯 Main UI
@@ -244,10 +296,10 @@ st.title("🧰 Trac Job Scraper (Optimized)")
     working_pattern,
     min_band,
     max_band,
-    requires_license,
-    sponsorship_required,
     pages_to_scrape,
-    search
+    search, 
+    filter_sponsorship, sponsorship_preference,
+    filter_license, license_preference
 ) = job_filter_sidebar()
 
 if search:
@@ -260,8 +312,6 @@ if search:
         working_pattern,
         min_band,
         max_band,
-        requires_license,
-        sponsorship_required,
         pages_to_scrape
     )
 
