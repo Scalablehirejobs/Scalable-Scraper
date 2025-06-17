@@ -7,6 +7,7 @@ import pandas as pd
 import time
 from concurrent.futures import ThreadPoolExecutor
 import streamlit as st
+import gdrive_uploader
 
 
 def generate_trac_url(keyword, page=1):
@@ -69,13 +70,21 @@ def job_detail_passes_filters(job_url, contract_type, working_pattern, requires_
 
         contract = extract_text(detail_soup, "#hj-job-summary > div > div > div > dl:nth-child(1) > dd:nth-child(6)")
         pattern = extract_text(detail_soup, "#hj-job-summary > div > div > div > dl:nth-child(1) > dd:nth-child(8)")
-        description = extract_text(detail_soup, "#hj-job-advert-overview").lower()
+        description_block = detail_soup.get_text(separator=" ", strip=True).lower()
+
+        sponsorship_status = detect_sponsorship(detail_soup)
+        requires_sponsorship = (sponsorship_status != "Not Offered")
+
+        requires_license = any(
+            re.search(rf"\b{word}\b", description_block)
+            for word in ["driver", "licence", "license"]
+        )
 
         info = {
-            "Requires Sponsorship": "sponsorship" in description,
-            "Requires Driver's License": "driver" in description or "licence" in description or "license" in description
+            "Requires Sponsorship": requires_sponsorship,
+            "Requires Driver's License": requires_license
         }
-
+        
         # Filter logic
         if contract_type and contract_type.lower() not in contract.lower():
             return False, info
@@ -92,7 +101,7 @@ def job_detail_passes_filters(job_url, contract_type, working_pattern, requires_
 
 
 
-def process_single_job(job, keyword, min_salary, contract_type, working_pattern, min_band, max_band,
+def process_single_job(job, keywords, min_salary, contract_type, working_pattern, min_band, max_band,
                        requires_license, sponsorship_required):
     link_tag = job.select_one("a")
     if not link_tag:
@@ -106,14 +115,14 @@ def process_single_job(job, keyword, min_salary, contract_type, working_pattern,
     salary = extract_text(job, "div.hj-salary.hj-job-detail")
     min_sal, max_sal = extract_salary_bounds(salary)
 
-    if partial_ratio(title.lower(), keyword.lower()) < 70:
+    # ✅ Updated to check against all keywords
+    if not any(partial_ratio(title.lower(), kw.lower()) >= 70 for kw in keywords):
         return None
     if not filter_by_band(band, min_band, max_band):
         return None
     if not filter_by_salary(salary, min_salary):
         return None
 
-    # Check detailed page and get metadata
     passed, info = job_detail_passes_filters(
         job_url, contract_type, working_pattern, requires_license, sponsorship_required
     )
@@ -133,80 +142,130 @@ def process_single_job(job, keyword, min_salary, contract_type, working_pattern,
 
 
 
-def scrape_trac_jobs(keyword, min_salary, contract_type, working_pattern, min_band, max_band,
+
+def scrape_trac_jobs(keywords, min_salary, contract_type, working_pattern, min_band, max_band,
                      requires_license=False, sponsorship_required=True, pages_to_scrape=3):
     all_results = []
-    progress = st.progress(0)
-    total_jobs_est = pages_to_scrape * 10
-    job_counter = 0
 
-    for page in range(1, pages_to_scrape + 1):
-        url = generate_trac_url(keyword, page)
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        job_listings = extract_job_listings(soup)
+    keyword_placeholders = {kw: st.empty() for kw in keywords}
 
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(
-                process_single_job, job, keyword, min_salary, contract_type,
-                working_pattern, min_band, max_band, requires_license, sponsorship_required
-            ) for job in job_listings]
+    for keyword in keywords:
+        keyword_placeholder = keyword_placeholders[keyword]
+        keyword_placeholder.markdown(f"### 🔍 Searching for: `{keyword}`")
+        progress_bar = keyword_placeholder.progress(0)
 
-            for future in futures:
-                result = future.result()
-                job_counter += 1
-                progress.progress(min(job_counter / total_jobs_est, 1.0))
-                if result:
-                    all_results.append(result)
+        total_jobs_est = pages_to_scrape * 10
+        job_counter = 0
 
-        time.sleep(1)
+        for page in range(1, pages_to_scrape + 1):
+            url = generate_trac_url(keyword, page)
+            try:
+                response = requests.get(url, timeout=10)
+                soup = BeautifulSoup(response.text, "html.parser")
+                job_listings = extract_job_listings(soup)
+            except Exception:
+                continue  # skip failed requests
+
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [
+                    executor.submit(
+                        process_single_job, job, keywords, min_salary, contract_type,
+                        working_pattern, min_band, max_band, requires_license, sponsorship_required
+                    ) for job in job_listings
+                ]
+
+                for future in futures:
+                    result = future.result()
+                    job_counter += 1
+                    progress_bar.progress(min(job_counter / total_jobs_est, 1.0))
+                    if result:
+                        all_results.append(result)
+
+            time.sleep(1)
+
+        progress_bar.progress(1.0)
+        keyword_placeholder.markdown(f"✅ Done searching for: `{keyword}`")
 
     return pd.DataFrame(all_results)
+
+
 
 
 # Streamlit UI
 def job_filter_sidebar():
     st.sidebar.header("🔍 Job Search Filters")
 
-    keyword = st.sidebar.text_input("Keyword", value="Healthcare support worker")
-    min_salary = st.sidebar.number_input("Minimum Salary (£)", min_value=0, value=20000)
+    keyword_input = st.sidebar.text_input("Keywords (comma-separated)", value="Healthcare support worker")
+    keywords = [kw.strip() for kw in keyword_input.split(",") if kw.strip()]
+    min_salary = st.sidebar.number_input("Minimum Salary (£)", min_value=0, value=24500)
 
     st.sidebar.markdown("#### Contract Details")
-    contract_type = st.sidebar.selectbox("Contract Type", ["", "Permanent", "Fixed Term", "Bank", "Secondment"])
-    working_pattern = st.sidebar.selectbox("Working Pattern", ["", "Full Time", "Part Time", "Flexible Working"])
+    contract_type = st.sidebar.selectbox("Contract Type", ["", "Permanent", "Fixed Term", "Bank", "Secondment"], index = 1)
+    working_pattern = st.sidebar.selectbox("Working Pattern", ["", "Full Time", "Part Time", "Flexible Working"], index = 1)
 
     st.sidebar.markdown("#### NHS Band Range")
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        min_band = st.number_input("Min Band", min_value=1, max_value=9, value=2, key="min_band")
+        min_band = st.number_input("Min Band", min_value=1, max_value=9, value=3, key="min_band")
     with col2:
-        max_band = st.number_input("Max Band", min_value=1, max_value=9, value=4, key="max_band")
+        max_band = st.number_input("Max Band", min_value=1, max_value=9, value=5, key="max_band")
 
     st.sidebar.markdown("#### Other Requirements")
     requires_license = st.sidebar.checkbox("Requires Driver's License", value=False)
     sponsorship_required = st.sidebar.checkbox("Offer Sponsorships", value=True)
 
-    pages_to_scrape = st.sidebar.slider("Pages to Scrape", 1, 10, 3)
+    pages_to_scrape = st.sidebar.number_input(
+    "Pages to Scrape", min_value=1, max_value=50, value=3, step=1
+)
     search = st.sidebar.button("Search Jobs 🔎")
 
-    return keyword, min_salary, contract_type, working_pattern, min_band, max_band, requires_license, sponsorship_required, pages_to_scrape, search
+    return keywords, min_salary, contract_type, working_pattern, min_band, max_band, requires_license, sponsorship_required, pages_to_scrape, search
+
+
+def detect_sponsorship(soup):
+    denial_phrases = [
+        "not offer sponsorship", "no sponsorship", "unable to sponsor",
+        "not able to sponsor", "must have right to work",
+        "cannot provide visa", "cannot sponsor", "uk residency required"
+    ]
+    description_block = soup.get_text(separator=" ", strip=True).lower()
+    if any(phrase in description_block for phrase in denial_phrases):
+        return "Not Offered"
+    return "Likely Offered"
 
 
 # 🎯 Main UI
 st.title("🧰 Trac Job Scraper (Optimized)")
 
 (
-    keyword, min_salary, contract_type, working_pattern,
-    min_band, max_band, requires_license,
-    sponsorship_required, pages_to_scrape, search
+    keywords,  # this is now a list of keywords
+    min_salary,
+    contract_type,
+    working_pattern,
+    min_band,
+    max_band,
+    requires_license,
+    sponsorship_required,
+    pages_to_scrape,
+    search
 ) = job_filter_sidebar()
 
 if search:
     st.info("🔄 Scraping in progress... Please wait.")
+
     df = scrape_trac_jobs(
-        keyword, min_salary, contract_type, working_pattern,
-        min_band, max_band, requires_license, sponsorship_required, pages_to_scrape
+        keywords,  # pass the list here
+        min_salary,
+        contract_type,
+        working_pattern,
+        min_band,
+        max_band,
+        requires_license,
+        sponsorship_required,
+        pages_to_scrape
     )
+
+    st.session_state["df_trac"] = df
 
     if df.empty:
         st.warning("❌ No jobs found matching your filters.")
@@ -220,4 +279,30 @@ if search:
             data=csv,
             file_name="trac_jobs.csv",
             mime="text/csv"
-)                 
+        )
+
+# -------------------- Upload to Google Drive --------------------
+
+if "df_trac" in st.session_state:
+    st.markdown("---")
+    st.subheader("📤 Upload to Google Drive")
+    st.markdown("#### Select Job Category for Upload")
+    category = st.selectbox("Job Category", [
+        "Admin",
+        "Healthcare",
+        "Business (PM, BA)",
+        "Finance",
+        "Tech"
+    ], index=None, placeholder="Choose a category")
+
+    if category and st.button("📤 Upload to Drive"):
+        try:
+            message = gdrive_uploader.upload_to_drive(st.session_state["df_trac"], category, prefix='trac')
+            st.success("✅ Upload completed successfully!")
+            st.caption(message)
+        except Exception as e:
+            st.error(f"❌ Upload failed: {str(e)}")
+    elif not category:
+        st.warning("⚠️ Please select a category before uploading.")
+else:
+    st.info("Please run a job search before uploading to Google Drive.")
