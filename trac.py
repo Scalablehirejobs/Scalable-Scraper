@@ -198,7 +198,9 @@ def scrape_trac_jobs(keywords, min_salary, contract_type, working_pattern, min_b
         progress_bar.progress(1.0)
         keyword_placeholder.markdown(f"✅ Done searching for: `{keyword}`")
 
-    return pd.DataFrame(all_results)
+    df = pd.DataFrame(all_results)
+    # dropping duplicates from multi keywords search
+    return df.drop_duplicates().reset_index(drop=True)
 
 
 def analyze_job_requirements(description: str) -> dict:
